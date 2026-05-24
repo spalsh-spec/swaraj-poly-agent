@@ -1,10 +1,17 @@
-"""signal.py — Hurst R/S + corrected Kelly criterion (Simons methodology)."""
+"""signal.py — Hurst R/S + corrected Kelly criterion (Simons methodology).
+
+CRITICAL FIX (v1.1): Apply Hurst to INCREMENTS of log-odds, not levels.
+Log-odds of bounded price series creates spurious persistence in levels.
+First-differencing yields stationary series → correct H ≈ 0.5 for random,
+H > 0.6 for genuinely trending, H < 0.4 for mean-reverting.
+"""
 import math
 from typing import Optional
 
+
 # ── Hurst exponent via R/S analysis ─────────────────────────────────────────
 def hurst_rs(ts: list[float], min_chunk: int = 8) -> float:
-    """Return Hurst exponent H for time series ts.
+    """Return Hurst exponent H for time series ts (must be stationary).
     H > 0.55 → persistent/trending (exploitable autocorrelation)
     H < 0.45 → mean-reverting
     H ≈ 0.50 → random walk (no edge)
@@ -67,7 +74,7 @@ def adjust_prob(p_raw: float, H: float, mom: float) -> float:
     """Shift raw market probability using fractal regime + momentum."""
     r = regime(H)
     if r in ("TRENDING↗", "PERSISTENT"):
-        weight = min(0.15, abs(mom) * 2)
+        weight = min(0.12, abs(mom) * 2)
         delta = weight if mom > 0 else -weight
         return max(0.01, min(0.99, p_raw + delta))
     if r == "MEAN-REV↩":
@@ -76,48 +83,63 @@ def adjust_prob(p_raw: float, H: float, mom: float) -> float:
 
 
 # ── Corrected Kelly for asymmetric Polymarket payoffs ─────────────────────────
-def kelly_yes(p_true: float, p_market: float) -> float:
-    """Half-Kelly fraction for a YES bet at price p_market (0–1)."""
+def kelly_yes(p_true: float, p_market: float, fee: float = 0.001) -> float:
+    """Half-Kelly fraction for a YES bet at price p_market (0–1).
+    fee: Polymarket taker fee (0.1% on CLOB limit orders that cross spread).
+    Limit orders as maker = 0 fee; using 0.001 as conservative estimate.
+    """
     if p_market >= 0.999 or p_market <= 0.001:
         return 0.0
-    b = (1 - p_market) / p_market   # payoff ratio: win (1-p)/p per dollar risked
+    b = (1 - p_market) / p_market
     k = (p_true * b - (1 - p_true)) / b
-    return max(0.0, k / 2)          # half-Kelly
+    k_net = k - fee / b          # fee drag
+    return max(0.0, k_net / 2)   # half-Kelly
 
 
-def kelly_no(p_true_yes: float, p_market_yes: float) -> float:
-    """Half-Kelly fraction for a NO bet (equivalent YES price = p_market_yes)."""
+def kelly_no(p_true_yes: float, p_market_yes: float, fee: float = 0.001) -> float:
+    """Half-Kelly fraction for a NO bet.
+    p_true_yes: our estimate of YES probability
+    p_market_yes: current YES token mid-price
+    """
     p_no_true   = 1 - p_true_yes
     p_market_no = 1 - p_market_yes
     if p_market_no >= 0.999 or p_market_no <= 0.001:
         return 0.0
     b = (1 - p_market_no) / p_market_no
     k = (p_no_true * b - (1 - p_no_true)) / b
-    return max(0.0, k / 2)
+    k_net = k - fee / b
+    return max(0.0, k_net / 2)
 
 
 # ── Full signal evaluation ────────────────────────────────────────────────────
 def evaluate(prices: list[float], market_price: float) -> Optional[dict]:
     """
-    Given a token price history and current market price, return a signal dict
-    or None if no edge.
-    prices: list of YES-token prices in [0,1], chronological
-    market_price: current mid-price
+    Given a token price history and current market price, return a signal dict.
+
+    FIX v1.1: Apply Hurst to INCREMENTS of log-odds (first differences),
+    not levels. Bounded series log-odds levels are non-stationary and produce
+    spuriously high H even for random markets (H≈0.95 on noise → false signals).
+    Increments are stationary: H≈0.50 random, H>0.6 trending, H<0.4 mean-rev.
     """
-    if len(prices) < 32:
+    if len(prices) < 33:   # need n+1 for increments
         return None
-    # convert to log-odds for Hurst (stationarises the series)
-    def safe_logodds(p):
+
+    def safe_logodds(p: float) -> float:
         p = max(0.001, min(0.999, p))
         return math.log(p / (1 - p))
+
     logodds = [safe_logodds(p) for p in prices]
-    H = hurst_rs(logodds)
+    # ✅ FIXED: use increments (first differences) for stationarity
+    increments = [logodds[i+1] - logodds[i] for i in range(len(logodds)-1)]
+
+    H = hurst_rs(increments)
     mom = momentum(prices)
     p_true = adjust_prob(market_price, H, mom)
     k_yes = kelly_yes(p_true, market_price)
     k_no  = kelly_no(p_true, market_price)
     best_k = k_yes if k_yes >= k_no else k_no
     side = "YES" if k_yes >= k_no else "NO"
+
     return {
         "H": round(H, 4),
         "regime": regime(H),
