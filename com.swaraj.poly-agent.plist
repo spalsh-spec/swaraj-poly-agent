@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd plist — P0 process supervision guardrail
+
+  Installation:
+    cp com.swaraj.poly-agent.plist ~/Library/LaunchAgents/
+    # edit WorkingDirectory and ProgramArguments paths below to match your setup
+    launchctl load ~/Library/LaunchAgents/com.swaraj.poly-agent.plist
+
+  Commands:
+    launchctl start  com.swaraj.poly-agent   # manual start
+    launchctl stop   com.swaraj.poly-agent   # graceful stop
+    launchctl unload ~/Library/LaunchAgents/com.swaraj.poly-agent.plist  # remove
+
+  Logs: tail -f /tmp/swaraj-poly-agent.log
+-->
+<plist version="1.0">
+<dict>
+  <!-- Label must match filename without extension -->
+  <key>Label</key>
+  <string>com.swaraj.poly-agent</string>
+
+  <!-- Restart on crash / exit -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Run at load (survives terminal close, starts on login) -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- ⚠️  EDIT: replace with your actual Python and project path -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/python3</string>
+    <string>/Users/sparshsharma/Projects/swaraj-poly-agent/run_agent.py</string>
+  </array>
+
+  <!-- ⚠️  EDIT: must point to project root (where .env lives) -->
+  <key>WorkingDirectory</key>
+  <string>/Users/sparshsharma/Projects/swaraj-poly-agent</string>
+
+  <!-- stdout/stderr → log file -->
+  <key>StandardOutPath</key>
+  <string>/tmp/swaraj-poly-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/swaraj-poly-agent.log</string>
+
+  <!-- Throttle restart loop: wait 30s before restarting after crash -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <!-- Inherit login environment (needed for PATH, HOME) -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/sparshsharma</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>
