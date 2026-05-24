@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="60">
+<title>swaraj-poly-agent — live dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0f;color:#e0e0e0;font-family:'Courier New',monospace;font-size:13px}
+header{background:#111;border-bottom:1px solid #1e3a5f;padding:12px 20px;display:flex;justify-content:space-between;align-items:center}
+header h1{font-size:16px;color:#4fc3f7;letter-spacing:2px}
+.badge{padding:3px 8px;border-radius:3px;font-size:11px;font-weight:bold}
+.dry{background:#f57c00;color:#000}.live{background:#388e3c;color:#fff}
+.kpi-row{display:flex;gap:12px;padding:14px 20px;flex-wrap:wrap}
+.kpi{background:#111;border:1px solid #1e3a5f;border-radius:6px;padding:10px 16px;flex:1;min-width:130px}
+.kpi .label{color:#78909c;font-size:10px;text-transform:uppercase;letter-spacing:1px}
+.kpi .value{font-size:22px;font-weight:bold;margin-top:4px}
+.pos{color:#4fc3f7}.neg{color:#ef5350}.neu{color:#90a4ae}
+section{padding:0 20px 20px}
+h2{color:#4fc3f7;font-size:12px;letter-spacing:1px;text-transform:uppercase;margin:16px 0 8px;border-bottom:1px solid #1e3a5f;padding-bottom:4px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#0d1b2a;color:#78909c;padding:6px 8px;text-align:left;font-weight:normal;font-size:10px;text-transform:uppercase;letter-spacing:1px}
+td{padding:6px 8px;border-bottom:1px solid #0d1b2a}
+tr:hover td{background:#0d1b2a}
+.regime-t{color:#26c6da}.regime-p{color:#66bb6a}.regime-m{color:#ef9a9a}.regime-r{color:#78909c}
+.side-yes{color:#66bb6a;font-weight:bold}.side-no{color:#ef5350;font-weight:bold}
+.footer{color:#37474f;text-align:center;padding:12px;font-size:10px}
+.err{color:#ef9a9a;padding:40px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚛ SWARAJ-POLY-AGENT</h1>
+  <span id="mode-badge" class="badge dry">DRY RUN</span>
+  <span id="updated" style="color:#546e7a;font-size:11px"></span>
+</header>
+
+<div class="kpi-row">
+  <div class="kpi"><div class="label">Bankroll</div><div class="value neu" id="kpi-bankroll">—</div></div>
+  <div class="kpi"><div class="label">Deployed</div><div class="value neu" id="kpi-deployed">—</div></div>
+  <div class="kpi"><div class="label">Daily P&L</div><div class="value neu" id="kpi-daily">—</div></div>
+  <div class="kpi"><div class="label">Total P&L</div><div class="value neu" id="kpi-total">—</div></div>
+  <div class="kpi"><div class="label">Open Positions</div><div class="value neu" id="kpi-pos">—</div></div>
+  <div class="kpi"><div class="label">Signals</div><div class="value neu" id="kpi-sig">—</div></div>
+</div>
+
+<section>
+  <h2>Open Positions</h2>
+  <table>
+    <thead><tr><th>Question</th><th>Side</th><th>Entry</th><th>Size</th><th>Regime</th><th>H</th></tr></thead>
+    <tbody id="pos-table"><tr><td colspan="6" class="err">Loading…</td></tr></tbody>
+  </table>
+
+  <h2>Top Signals (this scan)</h2>
+  <table>
+    <thead><tr><th>Question</th><th>Side</th><th>H</th><th>Regime</th><th>p_mkt</th><th>p_true</th><th>Kelly</th><th>Bet $</th></tr></thead>
+    <tbody id="sig-table"><tr><td colspan="8" class="err">Loading…</td></tr></tbody>
+  </table>
+</section>
+<div class="footer">auto-refresh 60s | swaraj-engine fractal methodology | DRY_RUN=True until manually enabled</div>
+
+<script>
+const BANKROLL = 100;
+
+async function load() {
+  try {
+    const r = await fetch('live.json?t=' + Date.now());
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+
+    document.getElementById('updated').textContent = 'Updated: ' + d.updated;
+    const badge = document.getElementById('mode-badge');
+    badge.textContent = d.dry_run ? 'DRY RUN' : '🔴 LIVE';
+    badge.className = 'badge ' + (d.dry_run ? 'dry' : 'live');
+
+    const pnl = v => `<span class="${v>0?'pos':v<0?'neg':'neu'}">${v>=0?'+':''}$${Math.abs(v).toFixed(2)}</span>`;
+    document.getElementById('kpi-bankroll').innerHTML  = `$${(d.bankroll||BANKROLL).toFixed(2)}`;
+    document.getElementById('kpi-deployed').innerHTML  = `$${(d.risk?.deployed_usdc||0).toFixed(2)}`;
+    document.getElementById('kpi-daily').innerHTML     = pnl(d.daily_pnl||0);
+    document.getElementById('kpi-total').innerHTML     = pnl(d.total_pnl||0);
+    document.getElementById('kpi-pos').innerHTML       = `<span class="neu">${d.risk?.open_positions||0}</span>`;
+    document.getElementById('kpi-sig').innerHTML       = `<span class="neu">${(d.signals||[]).length}</span>`;
+
+    const regimeClass = r => r?.includes('TRENDING')?'regime-t':r?.includes('PERSIST')?'regime-p':r?.includes('MEAN')?'regime-m':'regime-r';
+
+    // Positions
+    const posRows = (d.positions||[]).map(p => `
+      <tr>
+        <td>${(p.question||'').substring(0,80)}</td>
+        <td class="side-${(p.side||'').toLowerCase()}">${p.side}</td>
+        <td>${(p.entry_price||0).toFixed(4)}</td>
+        <td>$${(p.size_usdc||0).toFixed(2)}</td>
+        <td class="${regimeClass(p.regime)}">${p.regime||''}</td>
+        <td>${(p.H||0).toFixed(3)}</td>
+      </tr>`).join('') || '<tr><td colspan="6" style="color:#546e7a;padding:12px">No open positions</td></tr>';
+    document.getElementById('pos-table').innerHTML = posRows;
+
+    // Signals
+    const sigRows = (d.signals||[]).slice(0,15).map(s => {
+      const bet = (s.best_kelly * BANKROLL).toFixed(2);
+      return `<tr>
+        <td>${(s.question||'').substring(0,70)}</td>
+        <td class="side-${(s.side||'').toLowerCase()}">${s.side}</td>
+        <td>${(s.H||0).toFixed(3)}</td>
+        <td class="${regimeClass(s.regime)}">${s.regime||''}</td>
+        <td>${(s.p_market||0).toFixed(3)}</td>
+        <td>${(s.p_true||0).toFixed(3)}</td>
+        <td>${((s.best_kelly||0)*100).toFixed(1)}%</td>
+        <td>$${bet}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="8" style="color:#546e7a;padding:12px">No signals yet — waiting for scan</td></tr>';
+    document.getElementById('sig-table').innerHTML = sigRows;
+
+  } catch(e) {
+    document.getElementById('sig-table').innerHTML =
+      `<tr><td colspan="8" class="err">live.json not found — start the agent first: python run_agent.py</td></tr>`;
+  }
+}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
