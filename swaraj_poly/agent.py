@@ -13,6 +13,7 @@ Guardrails implemented here:
   P1:  MATIC gas balance check on startup
   P1:  exponential backoff already in executor._with_backoff()
 """
+from __future__ import annotations
 import asyncio, logging, time, json, os
 from datetime import datetime
 
@@ -147,7 +148,8 @@ class SwarajPolyAgent:
             order_id = resp.get("orderID", "")
 
             # P0: verify fill (async — run in thread so loop stays non-blocking)
-            fill_result = await asyncio.get_event_loop().run_in_executor(
+            # FIX: use asyncio.get_running_loop() — get_event_loop() is deprecated in 3.10+
+            fill_result = await asyncio.get_running_loop().run_in_executor(
                 None, self.executor.verify_fill, order_id, placed_at
             )
             log.info(f"   Fill result: {fill_result}")
@@ -190,7 +192,7 @@ class SwarajPolyAgent:
         print_summary(self.state)
 
     # ── Dashboard state dump ──────────────────────────────────────────────────
-    def _update_dashboard(self, signals: list[dict]):
+    def _update_dashboard(self, signals: list):
         payload = {
             "updated":    datetime.utcnow().isoformat() + "Z",
             "dry_run":    config.DRY_RUN,
@@ -212,13 +214,13 @@ class SwarajPolyAgent:
 
     # ── Main event loop ───────────────────────────────────────────────────────
     async def run(self):
-        log.info("🚀 swaraj-poly-agent starting")
+        log.info("swaraj-poly-agent starting")
         log.info(f"   DRY_RUN  = {config.DRY_RUN}")
         log.info(f"   BANKROLL = ${config.BANKROLL_USDC:.2f}")
         log.info(f"   MIN_HURST= {config.MIN_HURST}  MIN_KELLY={config.MIN_KELLY}")
 
         if config.DRY_RUN:
-            log.warning("   ⚠️  DRY_RUN=True — no real orders will be placed")
+            log.warning("   DRY_RUN=True — no real orders will be placed")
 
         # P1: MATIC gas check
         if not _check_matic_balance():

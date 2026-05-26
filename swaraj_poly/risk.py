@@ -1,15 +1,16 @@
 """risk.py — position limits, exposure checks, daily loss circuit-breaker."""
+from __future__ import annotations
 from . import config
 
 
 class RiskManager:
     def __init__(self):
-        self.positions: dict[str, dict] = {}   # token_id → {side, size_usdc, entry_price}
+        self.positions: dict = {}   # token_id → {side, size_usdc, entry_price}
         self.daily_pnl: float = 0.0
         self.paused: bool = False
 
     # ── Checks ───────────────────────────────────────────────────────────────
-    def can_bet(self, bankroll: float) -> tuple[bool, str]:
+    def can_bet(self, bankroll: float) -> tuple:
         if self.paused:
             return False, "agent paused (daily loss limit hit)"
         if self.daily_pnl <= -config.MAX_DAILY_LOSS:

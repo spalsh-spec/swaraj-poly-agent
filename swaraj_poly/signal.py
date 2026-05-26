@@ -5,12 +5,13 @@ Log-odds of bounded price series creates spurious persistence in levels.
 First-differencing yields stationary series → correct H ≈ 0.5 for random,
 H > 0.6 for genuinely trending, H < 0.4 for mean-reverting.
 """
+from __future__ import annotations
 import math
-from typing import Optional
+from typing import Optional, List
 
 
 # ── Hurst exponent via R/S analysis ─────────────────────────────────────────
-def hurst_rs(ts: list[float], min_chunk: int = 8) -> float:
+def hurst_rs(ts: List[float], min_chunk: int = 8) -> float:
     """Return Hurst exponent H for time series ts (must be stationary).
     H > 0.55 → persistent/trending (exploitable autocorrelation)
     H < 0.45 → mean-reverting
@@ -54,7 +55,7 @@ def regime(H: float) -> str:
 
 
 # ── EMA momentum ─────────────────────────────────────────────────────────────
-def _ema(series: list[float], span: int) -> list[float]:
+def _ema(series: List[float], span: int) -> List[float]:
     k = 2 / (span + 1)
     out = [series[0]]
     for v in series[1:]:
@@ -62,7 +63,7 @@ def _ema(series: list[float], span: int) -> list[float]:
     return out
 
 
-def momentum(prices: list[float], short: int = 12, long: int = 48) -> float:
+def momentum(prices: List[float], short: int = 12, long: int = 48) -> float:
     """EMA crossover momentum: positive → drifting up, negative → drifting down."""
     if len(prices) < long + 1:
         return 0.0
@@ -112,7 +113,7 @@ def kelly_no(p_true_yes: float, p_market_yes: float, fee: float = 0.001) -> floa
 
 
 # ── Full signal evaluation ────────────────────────────────────────────────────
-def evaluate(prices: list[float], market_price: float) -> Optional[dict]:
+def evaluate(prices: List[float], market_price: float) -> Optional[dict]:
     """
     Given a token price history and current market price, return a signal dict.
 
@@ -129,7 +130,7 @@ def evaluate(prices: list[float], market_price: float) -> Optional[dict]:
         return math.log(p / (1 - p))
 
     logodds = [safe_logodds(p) for p in prices]
-    # ✅ FIXED: use increments (first differences) for stationarity
+    # FIXED: use increments (first differences) for stationarity
     increments = [logodds[i+1] - logodds[i] for i in range(len(logodds)-1)]
 
     H = hurst_rs(increments)

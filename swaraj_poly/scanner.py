@@ -5,7 +5,9 @@ v1.1 fixes:
 - Require min_prices=100 for statistically valid H calculation
 - Add Hurst lag-count guard (min 4 regression points)
 """
+from __future__ import annotations
 import asyncio, time, math
+from typing import Optional
 import aiohttp
 from . import config
 from .signal import evaluate
@@ -18,7 +20,7 @@ CLOB   = config.CLOB_HOST
 MIN_PRICES = 100   # minimum price history points for valid Hurst
 
 
-async def _get(session: aiohttp.ClientSession, url: str, params=None) -> dict | list:
+async def _get(session: aiohttp.ClientSession, url: str, params=None):
     async with session.get(
         url, params=params, headers=HEADERS,
         timeout=aiohttp.ClientTimeout(total=20)
@@ -27,7 +29,7 @@ async def _get(session: aiohttp.ClientSession, url: str, params=None) -> dict | 
         return await r.json()
 
 
-async def fetch_active_markets(session: aiohttp.ClientSession, limit: int = 200) -> list[dict]:
+async def fetch_active_markets(session: aiohttp.ClientSession, limit: int = 200) -> list:
     """Pull active markets from Gamma API, filter by volume."""
     raw = await _get(session, f"{GAMMA}/markets", params={
         "active": "true", "closed": "false",
@@ -41,9 +43,9 @@ async def fetch_active_markets(session: aiohttp.ClientSession, limit: int = 200)
 async def fetch_price_history(
     session: aiohttp.ClientSession,
     token_id: str,
-    interval: str = "1w",    # ← FIXED: 1 week for reliable H
+    interval: str = "1w",    # 1 week for reliable H
     fidelity: int = 60,      # 60 ticks over the interval
-) -> list[float]:
+) -> list:
     """Return list of YES-token prices from CLOB price history endpoint."""
     try:
         data = await _get(session, f"{CLOB}/prices-history", params={
@@ -68,7 +70,7 @@ async def fetch_price_history(
         return []
 
 
-async def scan_markets() -> list[dict]:
+async def scan_markets() -> list:
     """
     Full scan: fetch markets → price history → signal evaluation.
     Returns list of signal dicts with market metadata attached.
@@ -91,10 +93,10 @@ async def scan_markets() -> list[dict]:
     return signals
 
 
-async def _analyze_market(session, market: dict, token_id: str) -> dict | None:
+async def _analyze_market(session, market: dict, token_id: str) -> Optional[dict]:
     prices = await fetch_price_history(session, token_id)
 
-    # ✅ GUARD: need MIN_PRICES for statistically reliable Hurst
+    # GUARD: need MIN_PRICES for statistically reliable Hurst
     if len(prices) < MIN_PRICES:
         return None
 
@@ -106,7 +108,7 @@ async def _analyze_market(session, market: dict, token_id: str) -> dict | None:
     if sig is None:
         return None
 
-    # ✅ GUARD: skip RANDOM regime even if kelly > threshold
+    # GUARD: skip RANDOM regime even if kelly > threshold
     if sig["regime"] == "RANDOM":
         return None
     if sig["best_kelly"] < config.MIN_KELLY:

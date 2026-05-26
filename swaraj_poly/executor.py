@@ -5,6 +5,7 @@ Guardrails implemented:
   P0-b: cancel_stale() — cancel GTC orders older than ORDER_FILL_TIMEOUT
   P1:   exponential backoff on transient API errors (3 retries, 2^n×2s)
 """
+from __future__ import annotations
 import asyncio, logging, time
 from typing import Optional
 
@@ -64,11 +65,13 @@ class Executor:
         side: str,
         price: float,
         size_usdc: float,
-        dry_run: bool = True,
+        dry_run: bool = False,   # FIX: was True — default True silently blocked all live orders
     ) -> dict:
         """
         Place a GTC limit order.  Returns order response dict.
         In dry_run mode: logs only, returns stub with dry_run=True.
+        Live/dry is controlled by config.DRY_RUN; this param allows
+        per-call override (e.g. tests).
         """
         if side == "YES":
             shares = round(size_usdc / price, 2)

@@ -2,6 +2,7 @@
 
 P0 guardrail: write to .tmp then os.replace() — never corrupt on crash.
 """
+from __future__ import annotations
 import json, time, logging, os, tempfile
 from . import config
 
