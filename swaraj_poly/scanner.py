@@ -138,6 +138,15 @@ async def _analyze_market(session, market: dict, token_id: str) -> Optional[dict
     if sig["H"] < config.MIN_HURST:
         return None
 
+    # GUARD v1.3: momentum alignment — only trade when price drift confirms side.
+    # Prevents betting YES into falling price or NO into rising price.
+    mom  = sig.get("momentum", 0)
+    side = sig.get("side", "")
+    if side == "YES" and mom < 0:
+        return None   # YES bet but price drifting down → skip
+    if side == "NO"  and mom > 0:
+        return None   # NO  bet but price drifting up   → skip
+
     return {
         **sig,
         "market_id":    market.get("id", ""),
