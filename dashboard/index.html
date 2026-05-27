@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swaraj Engine — Live Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0a0b0d; --surface: #111318; --border: #1e2128;
+    --text: #e8eaf0; --muted: #6b7280; --green: #22c55e;
+    --red: #ef4444; --yellow: #f59e0b; --blue: #3b82f6;
+    --phi: #a78bfa;
+  }
+  body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; }
+  header { display: flex; align-items: center; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  header h1 { font-size: 16px; font-weight: 600; color: var(--phi); letter-spacing: 0.05em; }
+  .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; }
+  .badge.dry { background: #78350f; color: #fbbf24; }
+  .badge.live { background: #14532d; color: #22c55e; }
+  .badge.safe { background: #1e3a5f; color: #60a5fa; }
+  .refresh-info { margin-left: auto; color: var(--muted); font-size: 11px; }
+  #countdown { color: var(--phi); }
+  .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); border-bottom: 1px solid var(--border); }
+  .stat { background: var(--surface); padding: 16px 24px; }
+  .stat-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
+  .stat-value { font-size: 22px; font-weight: 700; }
+  .stat-value.pos { color: var(--green); }
+  .stat-value.neg { color: var(--red); }
+  .stat-value.neutral { color: var(--text); }
+  .main { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); height: calc(100vh - 120px); }
+  .panel { background: var(--bg); overflow: hidden; display: flex; flex-direction: column; }
+  .panel-header { padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+  .panel-header span { color: var(--phi); font-weight: 700; }
+  .panel-body { overflow-y: auto; flex: 1; }
+  table { width: 100%; border-collapse: collapse; }
+  th { padding: 8px 16px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+  td { padding: 10px 16px; border-bottom: 1px solid var(--border); color: var(--text); white-space: nowrap; }
+  tr:hover td { background: var(--surface); }
+  .h-trend { color: var(--green); } .h-persist { color: #86efac; }
+  .h-random { color: var(--muted); } .h-meanrev { color: var(--yellow); }
+  .side-yes { color: var(--green); font-weight: 700; }
+  .side-no { color: var(--red); font-weight: 700; }
+  .q-text { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+  .empty { text-align: center; padding: 40px; color: var(--muted); }
+  .error-banner { background: #450a0a; color: #fca5a5; padding: 12px 24px; font-size: 12px; display: none; }
+  .last-updated { color: var(--muted); font-size: 10px; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); display: inline-block; margin-right: 6px; animation: pulse 2s infinite; }
+  .pnl-bar { height: 3px; background: var(--border); border-radius: 2px; margin-top: 6px; }
+  .pnl-fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ SWARAJ ENGINE</h1>
+  <div class="badge dry" id="mode-badge">DRY RUN</div>
+  <div class="badge safe">H &gt; 0.55 GATE</div>
+  <div class="badge safe">HALF-KELLY</div>
+  <div class="refresh-info">next scan in <span id="countdown">—</span>s &nbsp;|&nbsp; <span class="last-updated" id="last-updated">loading...</span></div>
+</header>
+<div class="error-banner" id="error-banner">⚠ Cannot load live.json — run the agent first, or serve this file via: <code>cd dashboard && python3 -m http.server 8765</code></div>
+<div class="stats-row">
+  <div class="stat"><div class="stat-label">Bankroll</div><div class="stat-value neutral" id="s-bankroll">—</div></div>
+  <div class="stat"><div class="stat-label">Daily P&amp;L</div><div class="stat-value" id="s-daily">—</div></div>
+  <div class="stat"><div class="stat-label">Total P&amp;L</div><div class="stat-value" id="s-total">—</div></div>
+  <div class="stat"><div class="stat-label">Open Positions</div><div class="stat-value neutral" id="s-pos">—</div></div>
+</div>
+<div class="main">
+  <div class="panel">
+    <div class="panel-header">Live Signals <span id="sig-count">0</span></div>
+    <div class="panel-body">
+      <table>
+        <thead><tr><th>H</th><th>Regime</th><th>Side</th><th>Kelly</th><th>Bet</th><th>Question</th></tr></thead>
+        <tbody id="signals-body"><tr><td colspan="6" class="empty">Waiting for scan cycle...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-header">Open Positions <span id="pos-count">0</span></div>
+    <div class="panel-body">
+      <table>
+        <thead><tr><th>Side</th><th>Size</th><th>Entry</th><th>H</th><th>Fill</th><th>Market</th></tr></thead>
+        <tbody id="positions-body"><tr><td colspan="6" class="empty">No open positions</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const DATA_URL = 'live.json';
+let countdown = 60;
+
+function fmt(v) {
+  if (v == null) return '—';
+  const n = parseFloat(v);
+  return (n >= 0 ? '+' : '') + n.toFixed(2);
+}
+
+function pnlClass(v) {
+  if (v == null) return 'neutral';
+  return parseFloat(v) >= 0 ? 'pos' : 'neg';
+}
+
+function hClass(regime) {
+  if (!regime) return '';
+  if (regime.includes('TREND')) return 'h-trend';
+  if (regime.includes('PERSIST')) return 'h-persist';
+  if (regime.includes('MEAN')) return 'h-meanrev';
+  return 'h-random';
+}
+
+function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '…' : (s || '—'); }
+
+function render(data) {
+  // Mode badge
+  const badge = document.getElementById('mode-badge');
+  if (data.dry_run) { badge.textContent = 'DRY RUN'; badge.className = 'badge dry'; }
+  else { badge.innerHTML = '<span class="live-dot"></span>LIVE'; badge.className = 'badge live'; }
+
+  // Stats
+  document.getElementById('s-bankroll').textContent = '$' + (data.bankroll || 0).toFixed(2);
+  const daily = data.daily_pnl || 0;
+  const total = data.total_pnl || 0;
+  const daily_el = document.getElementById('s-daily');
+  daily_el.textContent = '$' + fmt(daily); daily_el.className = 'stat-value ' + pnlClass(daily);
+  const total_el = document.getElementById('s-total');
+  total_el.textContent = '$' + fmt(total); total_el.className = 'stat-value ' + pnlClass(total);
+
+  // Positions count
+  const positions = data.positions || [];
+  document.getElementById('s-pos').textContent = positions.length;
+  document.getElementById('pos-count').textContent = positions.length;
+
+  // Signals
+  const signals = data.signals || [];
+  document.getElementById('sig-count').textContent = signals.length;
+  const sigBody = document.getElementById('signals-body');
+  if (!signals.length) {
+    sigBody.innerHTML = '<tr><td colspan="6" class="empty">No signals this cycle</td></tr>';
+  } else {
+    sigBody.innerHTML = signals.map(s => `
+      <tr>
+        <td class="${hClass(s.regime)}">${s.H}</td>
+        <td class="${hClass(s.regime)}">${s.regime || '—'}</td>
+        <td class="side-${(s.side||'').toLowerCase()}">${s.side}</td>
+        <td>${(s.best_kelly * 100).toFixed(1)}%</td>
+        <td>$${(s.best_kelly * (data.bankroll || 100) * 0.1).toFixed(2)}</td>
+        <td class="q-text" title="${(s.question||'').replace(/"/g,'&quot;')}">${truncate(s.question, 35)}</td>
+      </tr>`).join('');
+  }
+
+  // Positions
+  const posBody = document.getElementById('positions-body');
+  if (!positions.length) {
+    posBody.innerHTML = '<tr><td colspan="6" class="empty">No open positions</td></tr>';
+  } else {
+    posBody.innerHTML = positions.map(p => `
+      <tr>
+        <td class="side-${(p.side||'').toLowerCase()}">${p.side}</td>
+        <td>$${(p.size_usdc||0).toFixed(2)}</td>
+        <td>${(p.entry_price||0).toFixed(3)}</td>
+        <td class="${hClass(p.regime)}">${p.H || '—'}</td>
+        <td>${p.fill || '—'}</td>
+        <td class="q-text" title="${(p.question||'').replace(/"/g,'&quot;')}">${truncate(p.question, 30)}</td>
+      </tr>`).join('');
+  }
+
+  document.getElementById('last-updated').textContent = 'updated ' + new Date(data.updated).toLocaleTimeString();
+}
+
+async function load() {
+  try {
+    const resp = await fetch(DATA_URL + '?t=' + Date.now());
+    if (!resp.ok) throw new Error(resp.status);
+    const data = await resp.json();
+    document.getElementById('error-banner').style.display = 'none';
+    render(data);
+  } catch(e) {
+    document.getElementById('error-banner').style.display = 'block';
+  }
+}
+
+function tick() {
+  countdown--;
+  if (countdown <= 0) { countdown = 60; load(); }
+  document.getElementById('countdown').textContent = countdown;
+}
+
+load();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
