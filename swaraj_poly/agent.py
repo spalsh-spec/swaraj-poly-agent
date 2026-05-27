@@ -23,6 +23,8 @@ from .risk       import RiskManager
 from .executor   import Executor
 from .tracker    import load_state, save_state, record_trade, print_summary
 from .signal_log import log_signals, signal_stats
+from .notify     import (notify_signal, notify_fill, notify_circuit_breaker,
+                         notify_startup, notify_close)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -161,6 +163,7 @@ class SwarajPolyAgent:
                 f"[CLOSE] {pos.get('side')} {pos.get('question','')[:50]}… "
                 f"exit={exit_price:.3f} pnl={pnl:+.4f} reason={reason}"
             )
+            notify_close(pos, exit_price, pnl, reason)
 
         self.state["daily_pnl"]  = round(self.risk.daily_pnl, 4)
         from .tracker import save_state
@@ -191,6 +194,8 @@ class SwarajPolyAgent:
             ok, reason = self.risk.can_bet(self.bankroll)
             if not ok:
                 log.warning(f"   Risk gate blocked: {reason}")
+                if "daily loss" in reason:
+                    notify_circuit_breaker(self.risk.daily_pnl)
                 break
 
             # Skip already-open token_id
@@ -216,6 +221,7 @@ class SwarajPolyAgent:
                 f"p_mkt={sig['p_market']} p_true={sig['p_true']} "
                 f"kelly={sig['best_kelly']:.3f} → ${bet_size:.2f}"
             )
+            notify_signal(sig)   # Telegram alert if H/kelly above threshold
 
             # 3. Execute
             placed_at = int(time.time())
@@ -238,6 +244,8 @@ class SwarajPolyAgent:
                 None, self.executor.verify_fill, order_id, placed_at
             )
             log.info(f"   Fill result: {fill_result}")
+            if fill_result in ("filled", "dry_run"):
+                notify_fill(sig, bet_size, order_id)
 
             if fill_result in ("timeout", "cancelled", "expired"):
                 log.warning(f"   Order {order_id[:16]} not filled — skipping position record")
@@ -307,6 +315,8 @@ class SwarajPolyAgent:
 
         if config.DRY_RUN:
             log.warning("   DRY_RUN=True — no real orders will be placed")
+
+        notify_startup(config.DRY_RUN, config.BANKROLL_USDC)
 
         # P1: MATIC gas check
         if not _check_matic_balance():
