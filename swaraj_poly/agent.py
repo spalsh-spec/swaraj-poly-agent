@@ -85,11 +85,94 @@ class SwarajPolyAgent:
         if condition_id in ids:
             ids.remove(condition_id)
 
+    # ── Position close cycle ──────────────────────────────────────────────────
+    async def close_positions_cycle(self):
+        """Check open positions; close any that have resolved or are > MAX_HOLD_DAYS old.
+
+        Fetches current mid-price from CLOB for each open token and calls
+        risk.close_position() to realise P&L.
+
+        MAX_HOLD_DAYS defaults to 7 — configurable via config.MAX_HOLD_DAYS env var.
+        """
+        MAX_HOLD_DAYS = int(getattr(config, "MAX_HOLD_DAYS", 7))
+        cutoff_ts     = int(time.time()) - MAX_HOLD_DAYS * 86400
+        positions     = dict(self.state.get("positions", {}))
+
+        if not positions:
+            return
+
+        for token_id, pos in positions.items():
+            age_days = (time.time() - pos.get("ts", 0)) / 86400
+
+            # ── Try to fetch current CLOB mid-price ───────────────────────
+            exit_price = None
+            if not config.DRY_RUN:
+                try:
+                    book = await asyncio.get_running_loop().run_in_executor(
+                        None, self.executor._c().get_order_book, token_id
+                    )
+                    bids = book.get("bids") or []
+                    asks = book.get("asks") or []
+                    best_bid = float(bids[0]["price"]) if bids else None
+                    best_ask = float(asks[0]["price"]) if asks else None
+                    if best_bid and best_ask:
+                        exit_price = round((best_bid + best_ask) / 2, 4)
+                except Exception as e:
+                    log.warning(f"[CLOSE] price fetch failed for {token_id[:16]}: {e}")
+
+            # ── In dry_run use entry_price as exit (zero P&L, records close) ─
+            if config.DRY_RUN:
+                exit_price = pos.get("entry_price", 0.5)
+
+            if exit_price is None:
+                continue   # can't close without price
+
+            # ── Close if: > MAX_HOLD_DAYS old, or market price hit 0.02/0.98 ─
+            resolved = exit_price <= 0.02 or exit_price >= 0.98
+            stale    = pos.get("ts", 0) < cutoff_ts
+
+            if not (resolved or stale):
+                continue
+
+            reason = "resolved" if resolved else f"stale>{MAX_HOLD_DAYS}d"
+            pnl = self.risk.close_position(token_id, exit_price) or 0.0
+
+            from .tracker import record_trade
+            record_trade(self.state, {
+                "token_id":    token_id,
+                "question":    pos.get("question", ""),
+                "side":        pos.get("side", ""),
+                "size_usdc":   pos.get("size_usdc", 0),
+                "entry_price": pos.get("entry_price", 0),
+                "exit_price":  exit_price,
+                "pnl":         pnl,
+                "reason":      reason,
+                "age_days":    round(age_days, 2),
+            })
+
+            # Remove from state
+            self.state["positions"].pop(token_id, None)
+            cid = pos.get("condition_id", "")
+            if cid:
+                self._deregister_condition(cid)
+
+            log.info(
+                f"[CLOSE] {pos.get('side')} {pos.get('question','')[:50]}… "
+                f"exit={exit_price:.3f} pnl={pnl:+.4f} reason={reason}"
+            )
+
+        self.state["daily_pnl"]  = round(self.risk.daily_pnl, 4)
+        from .tracker import save_state
+        save_state(self.state)
+
     # ── Core cycle ────────────────────────────────────────────────────────────
     async def run_cycle(self):
         self.cycle += 1
         log.info(f"══ Cycle {self.cycle} | {datetime.utcnow().isoformat()}Z ══")
         log.info(f"   DRY_RUN={config.DRY_RUN} | Bankroll=${self.bankroll:.2f}")
+
+        # 0. Close resolved / stale positions first
+        await self.close_positions_cycle()
 
         # 1. Scan
         try:
