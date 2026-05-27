@@ -11,3 +11,5 @@ venv/
 dist/
 build/
 *.egg-info/
+signals_log.csv
+dashboard/signals_log.csv
