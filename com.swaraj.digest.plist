@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd plist — fires daily digest at 07:00 local time
+
+  Installation:
+    cp com.swaraj.digest.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.swaraj.digest.plist
+
+  Test immediately:
+    launchctl start com.swaraj.digest
+
+  Logs: tail -f /tmp/swaraj-digest.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.swaraj.digest</string>
+
+  <!-- Fire once per day at 07:00 local time -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <!-- ⚠️  EDIT: replace python3 path with output of: which python3 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/python3</string>
+    <string>-m</string>
+    <string>swaraj_poly.digest</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/sparshsharma/Projects/swaraj-poly-agent</string>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/swaraj-digest.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/swaraj-digest.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/sparshsharma</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>
