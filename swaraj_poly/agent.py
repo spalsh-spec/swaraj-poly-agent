@@ -18,10 +18,11 @@ import asyncio, logging, time, json, os
 from datetime import datetime
 
 from . import config
-from .scanner  import scan_markets
-from .risk     import RiskManager
-from .executor import Executor
-from .tracker  import load_state, save_state, record_trade, print_summary
+from .scanner    import scan_markets
+from .risk       import RiskManager
+from .executor   import Executor
+from .tracker    import load_state, save_state, record_trade, print_summary
+from .signal_log import log_signals, signal_stats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -182,6 +183,7 @@ class SwarajPolyAgent:
             return
 
         log.info(f"   Signals found: {len(signals)}")
+        log_signals(signals)   # persist to dashboard/signals_log.csv
         self._update_dashboard(signals)
 
         # 2. Process signals through risk gate
@@ -277,14 +279,15 @@ class SwarajPolyAgent:
     # ── Dashboard state dump ──────────────────────────────────────────────────
     def _update_dashboard(self, signals: list):
         payload = {
-            "updated":    datetime.utcnow().isoformat() + "Z",
-            "dry_run":    config.DRY_RUN,
-            "bankroll":   self.bankroll,
-            "risk":       self.risk.status(),
-            "signals":    signals[:20],
-            "positions":  list(self.state.get("positions", {}).values()),
-            "daily_pnl":  self.state.get("daily_pnl", 0),
-            "total_pnl":  self.state.get("total_pnl", 0),
+            "updated":       datetime.utcnow().isoformat() + "Z",
+            "dry_run":       config.DRY_RUN,
+            "bankroll":      self.bankroll,
+            "risk":          self.risk.status(),
+            "signals":       signals[:20],
+            "positions":     list(self.state.get("positions", {}).values()),
+            "daily_pnl":     self.state.get("daily_pnl", 0),
+            "total_pnl":     self.state.get("total_pnl", 0),
+            "signal_stats":  signal_stats(),
         }
         try:
             os.makedirs(os.path.dirname(DASHBOARD_PATH), exist_ok=True)
