@@ -1,12 +1,14 @@
 """scanner.py — fetch Polymarket markets + price history, run signal pipeline.
 
-v1.1 fixes:
+v1.2 fixes:
+- Parse clobTokenIds as JSON string (Gamma API returns '"[\\"tok1\\",\\"tok2\\"]"')
+- fidelity=60 → 60-min candles; 1-week window → ~169 points. MIN_PRICES=60.
 - Fetch 1-week price history (not 1-day) for reliable Hurst estimation
-- Require min_prices=100 for statistically valid H calculation
+- Require min_prices=60 for statistically valid H calculation
 - Add Hurst lag-count guard (min 4 regression points)
 """
 from __future__ import annotations
-import asyncio, time, math
+import asyncio, json, time, math
 from typing import Optional
 import aiohttp
 from . import config
@@ -17,7 +19,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (swaraj-poly-agent/1.0)"}
 GAMMA  = config.GAMMA_API
 CLOB   = config.CLOB_HOST
 
-MIN_PRICES = 100   # minimum price history points for valid Hurst
+MIN_PRICES = 60    # ~60 hourly candles; achievable via fidelity=60 + 1-week window
 
 
 async def _get(session: aiohttp.ClientSession, url: str, params=None):
@@ -40,11 +42,31 @@ async def fetch_active_markets(session: aiohttp.ClientSession, limit: int = 200)
     return markets
 
 
+def _parse_clob_ids(raw) -> list:
+    """
+    Gamma API returns clobTokenIds as a JSON-encoded string, e.g.:
+        '["98022490..."]'
+    Parse it regardless of whether it arrives as str or list.
+    """
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(x) for x in raw if x]
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed if x]
+        except Exception:
+            pass
+    return []
+
+
 async def fetch_price_history(
     session: aiohttp.ClientSession,
     token_id: str,
     interval: str = "1w",    # 1 week for reliable H
-    fidelity: int = 60,      # 60 ticks over the interval
+    fidelity: int = 60,      # 60-min candles ≈ 169 pts over 1 week
 ) -> list:
     """Return list of YES-token prices from CLOB price history endpoint."""
     try:
@@ -55,7 +77,7 @@ async def fetch_price_history(
         })
         history = data.get("history", [])
         prices = [float(p["p"]) for p in history if "p" in p]
-        # If 1w insufficient, try max
+        # If 1w insufficient, try max with same fidelity
         if len(prices) < MIN_PRICES:
             data2 = await _get(session, f"{CLOB}/prices-history", params={
                 "market": token_id,
@@ -80,7 +102,7 @@ async def scan_markets() -> list:
         markets = await fetch_active_markets(session)
         tasks = []
         for m in markets:
-            clob_ids = m.get("clobTokenIds") or []
+            clob_ids = _parse_clob_ids(m.get("clobTokenIds"))
             if not clob_ids:
                 continue
             token_id = clob_ids[0]
@@ -124,7 +146,7 @@ async def _analyze_market(session, market: dict, token_id: str) -> Optional[dict
         "question":     market.get("question", "")[:120],
         "volume":       float(market.get("volume", 0)),
         "end_date":     market.get("endDate", ""),
-        "clob_ids":     market.get("clobTokenIds", []),
+        "clob_ids":     _parse_clob_ids(market.get("clobTokenIds")),
         "price_points": len(prices),         # audit trail
         "scanned_at":   int(time.time()),
     }
